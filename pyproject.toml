@@ -1,0 +1,67 @@
+[project]
+name = "scene-reconstruction"
+version = "0.1.0"
+description = "MoGe-2 + Ouroboros scene reconstruction pipeline"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    # ── PyTorch (CUDA 12.4 wheels, Windows-compatible) ──
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "torchaudio>=2.5.0",
+    # ── pixel-perfect-depth deps ──
+    "matplotlib>=3.10.0",
+    "numpy>=1.26.0,<2.0", # open3d and older torch wheels prefer numpy 1.x
+    "omegaconf>=2.3.0",
+    "open3d>=0.18.0", # 0.19 wheels are Linux-only on PyPI; 0.18 has Win64
+    "opencv-python>=4.9.0",
+    "scikit-learn>=1.4.0",
+    "timm==0.9.1", # pinned – PPD imports internal timm APIs
+    # ── Ouroboros deps ──
+    "scipy>=1.13.0",
+    "pandas>=2.2.0",
+    "scikit-image>=0.22.0",
+    "imageio>=2.34.0",
+    "transformers>=4.40.0",
+    "diffusers>=0.27.0",
+    "accelerate>=0.30.0",
+    "datasets>=2.19.0",
+    "huggingface-hub>=0.23.0",
+    "peft>=0.10.0",
+    "safetensors>=0.4.3",
+    "tokenizers>=0.19.0",
+    "lpips>=0.1.4",
+    "pyyaml>=6.0.1",
+    "tqdm>=4.66.0",
+    "requests>=2.31.0",
+    "gradio-client>=1.0.0",
+    "packaging>=24.0",
+    "pydantic>=2.7.0",
+    "typing-extensions>=4.11.0",
+    "wandb>=0.17.0",
+    "gitpython>=3.1.43",
+    "h5py>=3.11.0",
+    # ── shared / pipeline extras ──
+    "pillow>=10.3.0",
+    "trimesh>=4.3.0", # GLB export in pipeline.py
+    "pyglet>=2.0.0", # trimesh viewer backend
+    "utils3d",
+    "xatlas>=0.0.11",
+]
+
+[tool.uv]
+package = false
+
+# ── CUDA 12.4 index for PyTorch wheels on Windows ──
+# This tells uv to pull torch/torchvision/torchaudio from the
+# official PyTorch CUDA 12.4 bucket instead of plain PyPI.
+# Change cu124 → cu126 if you have CUDA 12.6 drivers.
+[tool.uv.sources]
+torch      = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+torchaudio  = { index = "pytorch-cu124" }
+utils3d = { git = "https://github.com/EasternJournalist/utils3d.git", rev = "c5daf6f6c244d251f252102d09e9b7bcef791a38" }
+
+[[tool.uv.index]]
+name     = "pytorch-cu124"
+url      = "https://download.pytorch.org/whl/cu124"
+explicit = true          # only used for packages listed above, not everything
