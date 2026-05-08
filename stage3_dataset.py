@@ -5,6 +5,7 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
@@ -14,11 +15,13 @@ IMAGE_EXT_KEYS = {
     "reference": ["reference", "reference_path", "original", "original_path", "input", "image", "image_path"],
     "composite": ["composite_optimized", "optimized_composite", "composite", "composite_path"],
     "render": ["render_optimized", "render_optimize", "optimized_render", "render", "render_path"],
-    "albedo": ["albedo", "mvinverse_albedo"],
+    "albedo": ["hybrid_albedo", "albedo", "mvinverse_albedo"],
     "normal": ["normal", "mvinverse_normal"],
     "roughness": ["roughness", "mvinverse_roughness"],
     "metallic": ["metallic", "mvinverse_metallic"],
     "shading": ["shading", "mvinverse_shading"],
+    # Prefer soft mask first for smoother conditioning, then hard mask.
+    "glass_mask": ["glass_mask_soft", "glass_mask"],
 }
 
 
@@ -78,9 +81,8 @@ def load_rgb(path: Path, size: Tuple[int, int]) -> torch.Tensor:
     with Image.open(path) as img:
         img = img.convert("RGB")
         img = img.resize((size[1], size[0]), Image.BICUBIC)
-        data = torch.ByteTensor(torch.ByteStorage.from_buffer(img.tobytes()))
-        data = data.view(size[0], size[1], 3).permute(2, 0, 1).float() / 255.0
-    return data
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+    return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
 
 
 def load_gray(path: Path, size: Tuple[int, int]) -> torch.Tensor:
@@ -90,9 +92,8 @@ def load_gray(path: Path, size: Tuple[int, int]) -> torch.Tensor:
     with Image.open(path) as img:
         img = img.convert("L")
         img = img.resize((size[1], size[0]), Image.BICUBIC)
-        data = torch.ByteTensor(torch.ByteStorage.from_buffer(img.tobytes()))
-        data = data.view(size[0], size[1], 1).permute(2, 0, 1).float() / 255.0
-    return data
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+    return torch.from_numpy(arr)[None, ...].contiguous()
 
 
 class Stage3RelightDataset(Dataset):
@@ -103,16 +104,14 @@ class Stage3RelightDataset(Dataset):
       reference
       composite_optimized
       render_optimized
-      optional: albedo / mvinverse_albedo
+      optional: albedo / mvinverse_albedo / hybrid_albedo
       optional: normal / roughness / metallic / shading
+      optional: glass_mask / glass_mask_soft
 
-    Recommended first baseline after removing mask:
-      input_names=("composite", "render", "albedo")
-      target_name="reference"
-
-    Important:
-      No mask is used. The previous render_nonzero mask idea is removed because
-      render_optimized can contain HDR/background tile artifacts, making that mask invalid.
+    Example best practical setup:
+      input_names=("composite", "render", "albedo", "roughness", "metallic")
+    or:
+      input_names=("composite", "render", "albedo", "roughness", "metallic", "glass_mask")
     """
 
     def __init__(
@@ -162,7 +161,6 @@ class Stage3RelightDataset(Dataset):
         self.channels = self._compute_channels()
 
     def _row_is_usable(self, row: Dict[str, Any]) -> bool:
-        # Required for Stage3 training.
         for name in ["reference", "composite", "render"]:
             p = first_existing_path(row, name, self.dataset_root, require_exists=True)
             if p is None:
@@ -179,7 +177,7 @@ class Stage3RelightDataset(Dataset):
     def _compute_channels(self) -> int:
         channels = 0
         for name in self.input_names:
-            if name in {"roughness", "metallic"}:
+            if name in {"roughness", "metallic", "glass_mask"}:
                 channels += 1
             else:
                 channels += 3
@@ -229,14 +227,14 @@ class Stage3RelightDataset(Dataset):
             if name in self.input_names:
                 tensors[name] = self._load_optional_rgb(row, name)
 
-        for name in ["roughness", "metallic"]:
+        for name in ["roughness", "metallic", "glass_mask"]:
             if name in self.input_names:
                 tensors[name] = self._load_optional_gray(row, name)
 
         inputs = []
         for name in self.input_names:
             if name not in tensors:
-                if name in {"roughness", "metallic"}:
+                if name in {"roughness", "metallic", "glass_mask"}:
                     tensors[name] = self._load_optional_gray(row, name)
                 else:
                     tensors[name] = self._load_optional_rgb(row, name)
@@ -247,7 +245,7 @@ class Stage3RelightDataset(Dataset):
 
         scene_id = row.get("scene_id") or row.get("source_stem") or Path(str(ref_path)).stem
 
-        return {
+        out = {
             "x": x,
             "y": y,
             "reference": reference,
@@ -262,17 +260,27 @@ class Stage3RelightDataset(Dataset):
             },
         }
 
+        # Expose optional inputs for visualization/debug.
+        for key in ["albedo", "normal", "roughness", "metallic", "shading", "glass_mask"]:
+            if key in tensors:
+                out[key] = tensors[key]
+
+        return out
+
 
 def make_stage3_dataset(
     jsonl_path: str | Path,
     dataset_root: Optional[str | Path] = None,
     image_size: int = 256,
     with_albedo: bool = True,
+    with_glass_mask: bool = False,
     limit: int = -1,
 ) -> Stage3RelightDataset:
     inputs = ["composite", "render"]
     if with_albedo:
         inputs.append("albedo")
+    if with_glass_mask:
+        inputs.append("glass_mask")
 
     return Stage3RelightDataset(
         jsonl_path=jsonl_path,

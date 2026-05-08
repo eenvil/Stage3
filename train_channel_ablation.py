@@ -27,6 +27,8 @@ def tensor_to_pil(x: torch.Tensor) -> Image.Image:
     x = x.detach().float().cpu().clamp(0, 1)
     if x.ndim == 4:
         x = x[0]
+    if x.shape[0] == 1:
+        x = x.repeat(3, 1, 1)
     x = (x * 255.0).round().byte()
     x = x.permute(1, 2, 0).numpy()
     return Image.fromarray(x)
@@ -50,7 +52,7 @@ def save_visual_grid(batch: Dict, pred: torch.Tensor, out_path: Path, input_name
         ("render_in", render),
     ]
 
-    for name in ["albedo", "normal", "roughness", "metallic", "shading"]:
+    for name in ["albedo", "normal", "roughness", "metallic", "shading", "glass_mask"]:
         if name in input_names and name in batch:
             cols.append((f"{name}_in", batch[name][:max_items]))
 
@@ -137,6 +139,8 @@ def parse_input_names(args) -> List[str]:
         inputs.append("metallic")
     if args.use_shading:
         inputs.append("shading")
+    if args.use_glass_mask:
+        inputs.append("glass_mask")
     return inputs
 
 
@@ -163,6 +167,7 @@ def main() -> None:
     ap.add_argument("--use-roughness", action="store_true")
     ap.add_argument("--use-metallic", action="store_true")
     ap.add_argument("--use-shading", action="store_true")
+    ap.add_argument("--use-glass-mask", action="store_true")
     args = ap.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
